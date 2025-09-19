@@ -10,6 +10,7 @@ import json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import assets
+import pose
 import utils
 import camera
 import mesh_actor
@@ -20,39 +21,75 @@ importlib.reload(camera)
 importlib.reload(utils)
 importlib.reload(mesh_actor)
 importlib.reload(assets)
+importlib.reload(pose)
 importlib.reload(serialize)
 
-AX, AY, AZ = 67170.0, 40950.0, -36400.0
+AX, AY, AZ =  pose.DESERT_POSE
+OBJ_PROXIMITY = 500
+SAMPLE_RADIUS = 300
 
 OUTPUT_PATH = "C:/Users/woj/unreal_scripts/out/" + datetime.now().strftime('%y%m%d-%H%M%S')
+
 os.makedirs(OUTPUT_PATH)
 
 
 def sample_obj_pos(objects):
+    # sample radius
+    ax_center = random.gauss(AX, SAMPLE_RADIUS)
+    ay_center = random.gauss(AY, SAMPLE_RADIUS)
     for o in objects:
-        rot = unreal.Rotator(0, 0, random.uniform(0.0, 360.0))
-        pos = unreal.Vector(
-            random.gauss(AX, 500), 
-            random.gauss(AY, 500), 
-            random.gauss(AZ, 0) 
-        )
-        o.move_to(pos, rot)
+        try:
+            rot = unreal.Rotator(0, 0, random.uniform(0.0, 360.0))
+            
+            # Sample X, Y positions
+            x = random.gauss(ax_center, OBJ_PROXIMITY)
+            y = random.gauss(ay_center, OBJ_PROXIMITY)
+            
+            # Find ground height at this X,Y position using line trace
+            ground_z = utils.detect_ground_at_position(x, y, AZ)
+            
+            # Calculate proper Z position based on object bounds
+            # Get how much the object extends below its origin
+            object_offset = o.get_ground_offset()
+            
+            # Place object so its bottom surface touches the ground
+            # Add a small safety margin (5 units) to prevent floating
+            spawn_z = ground_z - object_offset + 5
+            
+            print(f"Object {o.actor.get_actor_label()}: ground_z={ground_z:.2f}, offset={object_offset:.2f}, spawn_z={spawn_z:.2f}")
+            
+            pos = unreal.Vector(x, y, spawn_z)
+            o.move_to(pos, rot)
+            
+        except Exception as e:
+            print(f"Error positioning object {o.actor.get_actor_label()}: {e}")
+            # Fallback to original positioning method
+            pos = unreal.Vector(
+                random.gauss(ax_center, OBJ_PROXIMITY), 
+                random.gauss(ay_center, OBJ_PROXIMITY),
+                random.gauss(AZ, 0)
+            )
+            o.move_to(pos, rot)
 
     n = len(objects)
     for i in range(n):
         for j in range(i + 1, n):
             if objects[i].overlaps(objects[j]):
-                return False
+                return False, (ax_center, ay_center)
             if objects[i].distance_to(objects[j]) > 1000:
-                return False
-    return True
+                return False, (ax_center, ay_center)
+    return True, (ax_center, ay_center)
 
 
-def sample_camera(cam, objects):
+def sample_camera(cam, objects, axy_center):
+    # Calculate the average Z position of all objects for better camera positioning
+    object_positions = [o.actor.get_actor_location() for o in objects]
+    avg_z = sum(pos.z for pos in object_positions) / len(object_positions) if object_positions else AZ
+    ax_center, ay_center = axy_center
     camera_pos = unreal.Vector(
-        random.uniform(AX-2500, AX+2500), 
-        random.uniform(AY-2500, AY+2500), 
-        random.uniform(AZ, AZ+1500)
+        random.uniform(ax_center-2500, ax_center+2500), 
+        random.uniform(ay_center-2500, ay_center+2500), 
+        random.uniform(avg_z, avg_z+1500)  # Position camera relative to objects, not fixed AZ
     )
     cam.move_to(camera_pos)
     cam.look_at_many([o.actor for o in objects])
@@ -71,13 +108,13 @@ def sample_camera(cam, objects):
 def schedule(cam, objects, gap=1.5):
     for i in range(500):
         for j in range(10):
-            good = sample_obj_pos(objects)
+            good, (ax_center, ay_center) = sample_obj_pos(objects)
             print(f"Sampling obj pos iter={j}, good={good}")
             if good:
                 break 
 
         for j in range(15):
-            good = sample_camera(cam, objects)
+            good = sample_camera(cam, objects, (ax_center, ay_center))
             print(f"Sampling camera iter={j}, good={good}")
             if good:
                 break 

@@ -1,7 +1,7 @@
 # mesh_actor.py (UE 5.4)
 import unreal
 import math
-from typing import Optional
+from typing import Optional, Tuple
 
 editor = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 
@@ -59,6 +59,21 @@ class MeshActor:
             MeshActor._instances.remove(self)
         except ValueError:
             pass
+
+    def get_bounds(self) -> Tuple[unreal.Vector, unreal.Vector]:
+        """Returns (min, max) world-space bounds of the actor"""
+        self._assert_alive()
+        origin, extent = self.actor.get_actor_bounds(False)
+        min_bounds = unreal.Vector(origin.x - extent.x, origin.y - extent.y, origin.z - extent.z)
+        max_bounds = unreal.Vector(origin.x + extent.x, origin.y + extent.y, origin.z + extent.z)
+        return min_bounds, max_bounds
+
+    def get_ground_offset(self) -> float:
+        """Returns how much the object extends below its origin (negative value)"""
+        self._assert_alive()
+        min_bounds, _ = self.get_bounds()
+        origin = self.actor.get_actor_location()
+        return min_bounds.z - origin.z
 
     def overlaps(self, other: "MeshActor", padding: float = 0.0) -> bool:
         """
